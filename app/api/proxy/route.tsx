@@ -1,38 +1,25 @@
 import { type NextRequest, NextResponse } from "next/server"
 
 const MIME_TYPES = {
-  // JavaScript and TypeScript
   ".js": "application/javascript",
   ".mjs": "application/javascript",
   ".jsx": "text/jsx",
   ".ts": "application/typescript",
   ".tsx": "text/tsx",
   ".json": "application/json",
-
-  // Web technologies
   ".css": "text/css",
   ".html": "text/html",
   ".htm": "text/html",
-
-  // Node.js and server files
   ".node": "application/node",
   ".express": "application/javascript",
-
-  // Phantom.js
   ".phantom": "application/javascript",
-
-  // Images
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".svg": "image/svg+xml",
   ".webp": "image/webp",
-
-  // WebAssembly
   ".wasm": "application/wasm",
-
-  // Other common types
   ".xml": "application/xml",
   ".pdf": "application/pdf",
   ".zip": "application/zip",
@@ -45,7 +32,6 @@ function getMimeType(url: string): string {
 
 function processJavaScript(content: string, targetUrl: string): string {
   try {
-    // Handle ES6 module imports
     content = content.replace(/(?:import\s+.*?\s+from\s+['"`])([^'"`]+)(['"`])/g, (match, modulePath, quote) => {
       if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
         return match
@@ -58,8 +44,8 @@ function processJavaScript(content: string, targetUrl: string): string {
       }
     })
 
-    // Fixed regex: replaced $$ with $$ and $$ for dynamic imports
-    content = content.replace(/import\s*$$\s*['"`]([^'"`]+)['"`]\s*$$/g, (match, modulePath) => {
+    // FIXED: $$ -> \( and \) for dynamic imports
+    content = content.replace(/import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
       if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
         return match
       }
@@ -71,8 +57,8 @@ function processJavaScript(content: string, targetUrl: string): string {
       }
     })
 
-    // Fixed regex: replaced $$ with $$ and $$ for require calls
-    content = content.replace(/require\s*$$\s*['"`]([^'"`]+)['"`]\s*$$/g, (match, modulePath) => {
+    // FIXED: $$ -> \( and \) for require calls
+    content = content.replace(/require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
       if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
         return match
       }
@@ -84,7 +70,6 @@ function processJavaScript(content: string, targetUrl: string): string {
       }
     })
 
-    // Handle export from statements
     content = content.replace(/export\s+.*?\s+from\s+['"`]([^'"`]+)['"`]/g, (match, modulePath, quote) => {
       if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
         return match
@@ -97,7 +82,6 @@ function processJavaScript(content: string, targetUrl: string): string {
       }
     })
 
-    // Handle Worker instantiation
     content = content.replace(/new\s+(?:Shared)?Worker\s*\(\s*['"`]([^'"`]+)['"`]/g, (match, workerPath) => {
       if (workerPath.startsWith("http") || workerPath.startsWith("//")) {
         return match
@@ -118,10 +102,8 @@ function processJavaScript(content: string, targetUrl: string): string {
 }
 
 function processTypeScript(content: string, targetUrl: string): string {
-  // Process TypeScript imports and exports
   content = processJavaScript(content, targetUrl)
 
-  // Handle TypeScript-specific imports
   content = content.replace(/(?:import\s+type\s+.*?\s+from\s+['"`])([^'"`]+)(['"`])/g, (match, modulePath, quote) => {
     if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
       return match
@@ -138,8 +120,8 @@ function processTypeScript(content: string, targetUrl: string): string {
 }
 
 function processCSS(content: string, targetUrl: string): string {
-  // Fixed regex: replaced $$ with $$ and $$ for @import statements
-  content = content.replace(/@import\s+(?:url$$)?['"`]?([^'"`()]+)['"`]?$$?/g, (match, cssPath) => {
+  // FIXED: $$ -> \( and \) for @import url(...)
+  content = content.replace(/@import\s+(?:url\()?['"`]?([^'"`()]+)['"`]?\)?/g, (match, cssPath) => {
     if (cssPath.startsWith("http") || cssPath.startsWith("//")) {
       return match
     }
@@ -151,8 +133,8 @@ function processCSS(content: string, targetUrl: string): string {
     }
   })
 
-  // Fixed regex: replaced $$ with $$ and $$ for url() references
-  content = content.replace(/url$$['"`]?([^'"`()]+)['"`]?$$/g, (match, resourcePath) => {
+  // FIXED: $$ -> \( and \) for url() references
+  content = content.replace(/url\(['"`]?([^'"`()]+)['"`]?\)/g, (match, resourcePath) => {
     if (resourcePath.startsWith("http") || resourcePath.startsWith("//") || resourcePath.startsWith("data:")) {
       return match
     }
@@ -170,7 +152,6 @@ function processCSS(content: string, targetUrl: string): string {
 function processHTML(content: string, targetUrl: string): string {
   const url = new URL(targetUrl)
 
-  // Handle inline scripts - wrap in try-catch for error handling
   content = content.replace(/<script([^>]*)>([\s\S]*?)<\/script>/gi, (match, attrs, scriptContent) => {
     if (scriptContent.trim()) {
       const wrappedScript = `
@@ -185,7 +166,6 @@ function processHTML(content: string, targetUrl: string): string {
     return match
   })
 
-  // Handle anchor tags with href attributes - redirect through proxy
   content = content.replace(
     /<a\s+([^>]*?)href=["'](?!http|\/\/|#|mailto:|tel:|javascript:|data:)([^"']+)["']([^>]*?)>/gi,
     (match, beforeHref, hrefUrl, afterHref) => {
@@ -198,7 +178,6 @@ function processHTML(content: string, targetUrl: string): string {
     },
   )
 
-  // Handle form actions - redirect through proxy
   content = content.replace(
     /<form\s+([^>]*?)action=["'](?!http|\/\/|#|mailto:|tel:|javascript:|data:)([^"']+)["']([^>]*?)>/gi,
     (match, beforeAction, actionUrl, afterAction) => {
@@ -211,7 +190,6 @@ function processHTML(content: string, targetUrl: string): string {
     },
   )
 
-  // Handle all other resource attributes (src, data-src, srcset, etc.)
   content = content.replace(
     /(src|data-src|srcset)=["'](?!http|\/\/|#|mailto:|tel:|data:)([^"']+)["']/gi,
     (match, attr, resourceUrl) => {
@@ -224,7 +202,6 @@ function processHTML(content: string, targetUrl: string): string {
     },
   )
 
-  // Handle srcset attributes for responsive images
   content = content.replace(/srcset=["']([^"']+)["']/gi, (match, srcset) => {
     const processedSrcset = srcset.replace(/(?!http|\/\/|data:)([^\s,]+)/g, (url: string) => {
       try {
@@ -237,7 +214,6 @@ function processHTML(content: string, targetUrl: string): string {
     return `srcset="${processedSrcset}"`
   })
 
-  // Replace relative protocol URLs
   content = content.replace(/(href|src|action)=["']\/\/([^"']+)["']/gi, `$1="${url.protocol}//$2"`)
 
   const proxyScript = `
@@ -245,7 +221,6 @@ function processHTML(content: string, targetUrl: string): string {
       (function() {
         console.log('[v0] Proxy browser initialized for: ${targetUrl}');
 
-        // Handle dynamic link clicks
         document.addEventListener('click', function(e) {
           const link = e.target.closest('a[href]');
           if (link && link.href) {
@@ -265,7 +240,6 @@ function processHTML(content: string, targetUrl: string): string {
           }
         });
 
-        // Handle form submissions
         document.addEventListener('submit', function(e) {
           const form = e.target;
           if (form.action && !form.action.startsWith('http') && !form.action.startsWith('//')) {
@@ -280,7 +254,6 @@ function processHTML(content: string, targetUrl: string): string {
           }
         });
 
-        // Handle window.location changes
         const originalLocation = window.location;
         const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
         
@@ -304,12 +277,10 @@ function processHTML(content: string, targetUrl: string): string {
           });
         }
 
-        // Global error handler for better debugging
         window.addEventListener('error', function(e) {
           console.error('[v0] Page error:', e.message, e.filename, e.lineno, e.colno);
         });
 
-        // Handle unhandled promise rejections
         window.addEventListener('unhandledrejection', function(e) {
           console.error('[v0] Unhandled promise rejection:', e.reason);
         });
@@ -338,10 +309,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Validate URL
     const url = new URL(targetUrl)
 
-    // Security: Block local/private IPs and certain protocols
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       return NextResponse.json({ error: "Only HTTP and HTTPS protocols are allowed" }, { status: 400 })
     }
@@ -463,7 +432,6 @@ export async function GET(request: NextRequest) {
         },
       })
     } else {
-      // Handle binary content and other file types
       const buffer = await response.arrayBuffer()
       return new NextResponse(buffer, {
         headers: {
@@ -485,7 +453,6 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  // Handle POST requests through proxy
   const { url: targetUrl, body, headers: requestHeaders } = await request.json()
 
   if (!targetUrl) {
