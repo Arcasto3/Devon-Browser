@@ -32,10 +32,8 @@ function getMimeType(url: string): string {
 
 function processJavaScript(content: string, targetUrl: string): string {
   try {
-    content = content.replace(/(?:import\s+.*?\s+from\s+['"`])([^'"`]+)(['"`])/g, (match, modulePath, quote) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-        return match
-      }
+    content = content.replace(/(?:import\s+.*?\s+from\s+['"`])([^'"`]+)(['"`])/g, (match, modulePath) => {
+      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
       try {
         const absoluteUrl = new URL(modulePath, targetUrl).href
         return match.replace(modulePath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
@@ -45,9 +43,7 @@ function processJavaScript(content: string, targetUrl: string): string {
     })
 
     content = content.replace(/import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-        return match
-      }
+      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
       try {
         const absoluteUrl = new URL(modulePath, targetUrl).href
         return `import('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
@@ -57,9 +53,7 @@ function processJavaScript(content: string, targetUrl: string): string {
     })
 
     content = content.replace(/require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-        return match
-      }
+      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
       try {
         const absoluteUrl = new URL(modulePath, targetUrl).href
         return `require('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
@@ -68,25 +62,11 @@ function processJavaScript(content: string, targetUrl: string): string {
       }
     })
 
-    content = content.replace(/export\s+.*?\s+from\s+['"`]([^'"`]+)['"`]/g, (match, modulePath, quote) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-        return match
-      }
+    content = content.replace(/export\s+.*?\s+from\s+['"`]([^'"`]+)['"`]/g, (match, modulePath) => {
+      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
       try {
         const absoluteUrl = new URL(modulePath, targetUrl).href
         return match.replace(modulePath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
-      } catch {
-        return match
-      }
-    })
-
-    content = content.replace(/new\s+(?:Shared)?Worker\s*\(\s*['"`]([^'"`]+)['"`]/g, (match, workerPath) => {
-      if (workerPath.startsWith("http") || workerPath.startsWith("//")) {
-        return match
-      }
-      try {
-        const absoluteUrl = new URL(workerPath, targetUrl).href
-        return match.replace(workerPath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
       } catch {
         return match
       }
@@ -101,27 +81,12 @@ function processJavaScript(content: string, targetUrl: string): string {
 
 function processTypeScript(content: string, targetUrl: string): string {
   content = processJavaScript(content, targetUrl)
-
-  content = content.replace(/(?:import\s+type\s+.*?\s+from\s+['"`])([^'"`]+)(['"`])/g, (match, modulePath, quote) => {
-    if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-      return match
-    }
-    try {
-      const absoluteUrl = new URL(modulePath, targetUrl).href
-      return match.replace(modulePath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
-    } catch {
-      return match
-    }
-  })
-
   return content
 }
 
 function processCSS(content: string, targetUrl: string): string {
   content = content.replace(/@import\s+(?:url\()?['"`]?([^'"`()]+)['"`]?\)?/g, (match, cssPath) => {
-    if (cssPath.startsWith("http") || cssPath.startsWith("//")) {
-      return match
-    }
+    if (cssPath.startsWith("http") || cssPath.startsWith("//")) return match
     try {
       const absoluteUrl = new URL(cssPath, targetUrl).href
       return `@import url('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
@@ -131,9 +96,7 @@ function processCSS(content: string, targetUrl: string): string {
   })
 
   content = content.replace(/url\(['"`]?([^'"`()]+)['"`]?\)/g, (match, resourcePath) => {
-    if (resourcePath.startsWith("http") || resourcePath.startsWith("//") || resourcePath.startsWith("data:")) {
-      return match
-    }
+    if (resourcePath.startsWith("http") || resourcePath.startsWith("//") || resourcePath.startsWith("data:")) return match
     try {
       const absoluteUrl = new URL(resourcePath, targetUrl).href
       return `url('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
@@ -198,81 +161,65 @@ function processHTML(content: string, targetUrl: string): string {
     },
   )
 
-  content = content.replace(/srcset=["']([^"']+)["']/gi, (match, srcset) => {
-    const processedSrcset = srcset.replace(/(?!http|\/\/|data:)([^\s,]+)/g, (url: string) => {
-      try {
-        const absoluteUrl = new URL(url, targetUrl).href
-        return `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`
-      } catch {
-        return url
-      }
-    })
-    return `srcset="${processedSrcset}"`
-  })
-
   content = content.replace(/(href|src|action)=["']\/\/([^"']+)["']/gi, `$1="${url.protocol}//$2"`)
 
   const proxyScript = `
     <script>
       (function() {
-        console.log('[v0] Proxy browser initialized for: ${targetUrl}');
+        console.log('[v0] Upgraded proxy engine initialized for: ${targetUrl}');
 
-        document.addEventListener('click', function(e) {
-          const target = e.target.closest('a[href], button[type="submit"], input[type="submit"]');
-          if (!target) return;
-
-          if (target.tagName === 'A') {
-            const href = target.getAttribute('href');
-            if (href && !href.startsWith('http') && !href.startsWith('//') && 
-                !href.startsWith('#') && !href.startsWith('mailto:') && 
-                !href.startsWith('tel:') && !href.startsWith('javascript:') &&
-                !href.startsWith('data:')) {
-              e.preventDefault();
-              try {
-                const absoluteUrl = new URL(href, '${targetUrl}').href;
-                window.location.href = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
-              } catch (error) {
-                console.error('[v0] Navigation error:', error);
-              }
-            }
-          }
-        }, true);
-
-        document.addEventListener('submit', function(e) {
-          const form = e.target;
-          if (!form) return;
-
-          const action = form.getAttribute('action') || window.location.href;
-          if (action.startsWith('http') || action.startsWith('//')) {
-            return;
-          }
-
-          e.preventDefault();
-          e.stopPropagation();
+        // Continuously sanitize forms and dynamic links as they render/mutate
+        const sanitizeElement = (el) => {
+          if (!el || typeof el.getAttribute !== 'function') return;
           
-          try {
-            const absoluteUrl = new URL(action, '${targetUrl}').href;
-            
-            if ((form.getAttribute('method') || 'GET').toUpperCase() === 'GET') {
-              const formData = new FormData(form);
-              const queryString = new URLSearchParams(formData).toString();
-              const finalUrl = absoluteUrl + (queryString ? '?' + queryString : '');
-              window.location.href = '/api/proxy?url=' + encodeURIComponent(finalUrl);
-            } else {
-              form.action = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
-              form.removeAttribute('target');
-              HTMLFormElement.prototype.submit.call(form);
+          if (el.tagName === 'FORM') {
+            const action = el.getAttribute('action');
+            if (action && !action.startsWith('/api/proxy') && !action.startsWith('http') && !action.startsWith('//') && !action.startsWith('javascript:')) {
+              try {
+                el.action = '/api/proxy?url=' + encodeURIComponent(new URL(action, '${targetUrl}').href);
+              } catch(err) {}
             }
-          } catch (error) {
-            console.error('[v0] Form submission error:', error);
+            if (el.getAttribute('target') === '_blank') {
+              el.removeAttribute('target');
+            }
           }
-        }, true);
+          
+          if (el.tagName === 'A') {
+            const href = el.getAttribute('href');
+            if (href && !href.startsWith('/api/proxy') && !href.startsWith('http') && !href.startsWith('//') && 
+                !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:') && 
+                !href.startsWith('javascript:') && !href.startsWith('data:')) {
+              try {
+                el.href = '/api/proxy?url=' + encodeURIComponent(new URL(href, '${targetUrl}').href);
+              } catch(err) {}
+            }
+          }
+        };
 
+        // Scan existing document
+        document.querySelectorAll('form, a').forEach(sanitizeElement);
+
+        // Observe DOM modifications to rewrite dynamically injected elements (prevents about:blank triggers)
+        const observer = new MutationObserver((mutations) => {
+          mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+              if (node.nodeType === 1) {
+                if (node.tagName === 'FORM' || node.tagName === 'A') {
+                  sanitizeElement(node);
+                }
+                node.querySelectorAll?.('form, a').forEach(sanitizeElement);
+              }
+            });
+          });
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+
+        // Fallback safety for window.open popups resolving to about:blank
         const originalOpen = window.open;
         window.open = function(url, target, features) {
           if (!url || url === 'about:blank') {
-            console.warn('[v0] Blocked about:blank popup attempt');
-            return null;
+            console.warn('[v0] Intercepted blank popup, routing safely');
+            return originalOpen.call(window, '${targetUrl}', '_self', features);
           }
           try {
             const absoluteUrl = new URL(url, '${targetUrl}').href;
@@ -282,36 +229,27 @@ function processHTML(content: string, targetUrl: string): string {
           }
         };
 
+        // Protect window.location changes
         const originalLocation = window.location;
         const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
-        
         if (locationDescriptor && locationDescriptor.configurable) {
           Object.defineProperty(window, 'location', {
             get: function() { return originalLocation; },
             set: function(url) {
-              if (typeof url === 'string' && url !== 'about:blank' && !url.startsWith('http') && !url.startsWith('//') &&
-                  !url.startsWith('#') && !url.startsWith('mailto:') && !url.startsWith('tel:')) {
+              if (typeof url === 'string' && url !== 'about:blank' && !url.startsWith('/api/proxy') && 
+                  !url.startsWith('http') && !url.startsWith('//') && !url.startsWith('#')) {
                 try {
                   const absoluteUrl = new URL(url, '${targetUrl}').href;
                   originalLocation.href = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
                 } catch (error) {
-                  console.error('[v0] Location change error:', error);
                   originalLocation.href = url;
                 }
               } else {
-                originalLocation.href = url === 'about:blank' ? '${targetUrl}' : url;
+                originalLocation.href = (url === 'about:blank') ? '${targetUrl}' : url;
               }
             }
           });
         }
-
-        window.addEventListener('error', function(e) {
-          console.error('[v0] Page error:', e.message, e.filename, e.lineno, e.colno);
-        });
-
-        window.addEventListener('unhandledrejection', function(e) {
-          console.error('[v0] Unhandled promise rejection:', e.reason);
-        });
       })();
     </script>
   `
@@ -355,18 +293,13 @@ export async function GET(request: NextRequest) {
         DNT: "1",
         Connection: "keep-alive",
         "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "cross-site",
       },
       redirect: "follow",
     })
 
     if (!response.ok) {
       return NextResponse.json(
-        {
-          error: `Failed to fetch: ${response.status} ${response.statusText}`,
-        },
+        { error: `Failed to fetch: ${response.status} ${response.statusText}` },
         { status: response.status },
       )
     }
@@ -472,9 +405,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("[v0] Proxy error:", error)
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unknown error occurred",
-      },
+      { error: error instanceof Error ? error.message : "Unknown error occurred" },
       { status: 500 },
     )
   }
@@ -509,9 +440,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("[v0] Proxy POST error:", error)
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unknown error occurred",
-      },
+      { error: error instanceof Error ? error.message : "Unknown error occurred" },
       { status: 500 },
     )
   }
