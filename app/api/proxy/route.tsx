@@ -1,489 +1,249 @@
-import { type NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
-const MIME_TYPES = {
-  ".js": "application/javascript",
-  ".mjs": "application/javascript",
-  ".jsx": "text/jsx",
-  ".ts": "application/typescript",
-  ".tsx": "text/tsx",
-  ".json": "application/json",
-  ".css": "text/css",
+// MIME types mapping
+const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
   ".htm": "text/html",
-  ".node": "application/node",
-  ".express": "application/javascript",
-  ".phantom": "application/javascript",
+  ".css": "text/css",
+  ".js": "application/javascript",
+  ".jsx": "application/javascript",
+  ".ts": "application/javascript",
+  ".tsx": "application/javascript",
+  ".json": "application/json",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".svg": "image/svg+xml",
-  ".webp": "image/webp",
-  ".wasm": "application/wasm",
-  ".xml": "application/xml",
-  ".pdf": "application/pdf",
-  ".zip": "application/zip",
-}
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".eot": "application/vnd.ms-fontobject",
+};
 
+// Helper function to get MIME type from URL
 function getMimeType(url: string): string {
-  const extension = url.split(".").pop()?.toLowerCase()
-  return extension ? MIME_TYPES[`.${extension}` as keyof typeof MIME_TYPES] || "text/plain" : "text/plain"
+  const extension = new URL(url).pathname.split(".").pop()?.toLowerCase() || "";
+  return MIME_TYPES[`.${extension}`] || "application/octet-stream";
 }
 
+// Helper function to process JavaScript content
 function processJavaScript(content: string, targetUrl: string): string {
-  try {
-    content = content.replace(/(?:import\s+.*?\s+from\s+['"`])([^'"`]+)(['"`])/g, (match, modulePath) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
+  return content.replace(
+    /(import|require|export|new URL\()(["'`])(?!https?:\/\/|\/\/|data:|chrome-extension:)(.*?)\2/g,
+    (match, keyword, quote, url) => {
       try {
-        const absoluteUrl = new URL(modulePath, targetUrl).href
-        return match.replace(modulePath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
+        const absoluteUrl = new URL(url, targetUrl).href;
+        return `${keyword}${quote}${absoluteUrl}${quote}`;
       } catch {
-        return match
+        return match;
       }
-    })
-
-    content = content.replace(/import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
-      try {
-        const absoluteUrl = new URL(modulePath, targetUrl).href
-        return `import('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
-      } catch {
-        return match
-      }
-    })
-
-    content = content.replace(/require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
-      try {
-        const absoluteUrl = new URL(modulePath, targetUrl).href
-        return `require('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
-      } catch {
-        return match
-      }
-    })
-
-    content = content.replace(/export\s+.*?\s+from\s+['"`]([^'"`]+)['"`]/g, (match, modulePath) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
-      try {
-        const absoluteUrl = new URL(modulePath, targetUrl).href
-        return match.replace(modulePath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
-      } catch {
-        return match
-      }
-    })
-
-    return content
-  } catch (error) {
-    console.error("[v0] Error processing JavaScript:", error)
-    return content
-  }
+    }
+  );
 }
 
+// Helper function to process TypeScript content
 function processTypeScript(content: string, targetUrl: string): string {
-  content = processJavaScript(content, targetUrl)
-  return content
+  return processJavaScript(content, targetUrl).replace(
+    /import type\s*{([^}]*)}\s*from\s*(["'`])(?!https?:\/\/|\/\/|data:|chrome-extension:)(.*?)\2/g,
+    (match, types, quote, url) => {
+      try {
+        const absoluteUrl = new URL(url, targetUrl).href;
+        return `import type {${types}} from ${quote}${absoluteUrl}${quote}`;
+      } catch {
+        return match;
+      }
+    }
+  );
 }
 
+// Helper function to process CSS content
 function processCSS(content: string, targetUrl: string): string {
-  content = content.replace(/@import\s+(?:url\()?['"`]?([^'"`()]+)['"`]?\)?/g, (match, cssPath) => {
-    if (cssPath.startsWith("http") || cssPath.startsWith("//")) return match
-    try {
-      const absoluteUrl = new URL(cssPath, targetUrl).href
-      return `@import url('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
-    } catch {
-      return match
-    }
-  })
-
-  content = content.replace(/url\(['"`]?([^'"`()]+)['"`]?\)/g, (match, resourcePath) => {
-    if (resourcePath.startsWith("http") || resourcePath.startsWith("//") || resourcePath.startsWith("data:")) return match
-    try {
-      const absoluteUrl = new URL(resourcePath, targetUrl).href
-      return `url('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
-    } catch {
-      return match
-    }
-  })
-
-  return content
-}
-
-function processHTML(content: string, targetUrl: string): string {
-  const url = new URL(targetUrl)
-
-  content = content.replace(/<script([^>]*)>([\s\S]*?)<\/script>/gi, (match, attrs, scriptContent) => {
-    if (scriptContent.trim()) {
-      const wrappedScript = `
-        try {
-          ${scriptContent}
-        } catch (error) {
-          console.error('[v0] Script error:', error);
+  return content.replace(
+    /(@import\s+["'`])(?!https?:\/\/|\/\/|data:)(.*?)\1|(url\()(["'`])(?!https?:\/\/|\/\/|data:)(.*?)\4/g,
+    (match, importQuote, importUrl, urlPrefix, urlQuote, url) => {
+      try {
+        const absoluteUrl = new URL(url, targetUrl).href;
+        if (importUrl) {
+          return `@import ${importQuote}${absoluteUrl}${importQuote}`;
+        } else {
+          return `url(${urlPrefix}${absoluteUrl}${urlQuote}`;
         }
-      `
-      return `<script${attrs}>${wrappedScript}</script>`
+      } catch {
+        return match;
+      }
     }
-    return match
-  })
-
-  content = content.replace(
-    /<a\s+([^>]*?)href=["'](?!http|\/\/|#|mailto:|tel:|javascript:|data:)([^"']+)["']([^>]*?)>/gi,
-    (match, beforeHref, hrefUrl, afterHref) => {
-      try {
-        const absoluteUrl = new URL(hrefUrl, targetUrl).href
-        return `<a ${beforeHref}href="/api/proxy?url=${encodeURIComponent(absoluteUrl)}"${afterHref}>`
-      } catch {
-        return match
-      }
-    },
-  )
-
-  content = content.replace(
-    /<form\s+([^>]*?)action=["'](?!http|\/\/|#|mailto:|tel:|javascript:|data:)([^"']+)["']([^>]*?)>/gi,
-    (match, beforeAction, actionUrl, afterAction) => {
-      try {
-        const absoluteUrl = new URL(actionUrl, targetUrl).href
-        return `<form ${beforeAction}action="/api/proxy?url=${encodeURIComponent(absoluteUrl)}"${afterAction}>`
-      } catch {
-        return match
-      }
-    },
-  )
-
-  content = content.replace(
-    /(src|data-src|srcset)=["'](?!http|\/\/|#|mailto:|tel:|data:)([^"']+)["']/gi,
-    (match, attr, resourceUrl) => {
-      try {
-        const absoluteUrl = new URL(resourceUrl, targetUrl).href
-        return `${attr}="/api/proxy?url=${encodeURIComponent(absoluteUrl)}"`
-      } catch {
-        return match
-      }
-    },
-  )
-
-  content = content.replace(/(href|src|action)=["']\/\/([^"']+)["']/gi, `$1="${url.protocol}//$2"`)
-
-  const proxyScript = `
-    <script>
-      (function() {
-        console.log('[v0] Universal click-interceptor engine initialized for: ${targetUrl}');
-
-        const sanitizeElement = (el) => {
-          if (!el || typeof el.getAttribute !== 'function') return;
-          
-          if (el.tagName === 'FORM') {
-            const action = el.getAttribute('action');
-            if (action && !action.startsWith('/api/proxy') && !action.startsWith('http') && !action.startsWith('//') && !action.startsWith('javascript:')) {
-              try {
-                el.action = '/api/proxy?url=' + encodeURIComponent(new URL(action, '${targetUrl}').href);
-              } catch(err) {}
-            }
-            if (el.getAttribute('target') === '_blank') {
-              el.removeAttribute('target');
-            }
-          }
-          
-          if (el.tagName === 'A') {
-            const href = el.getAttribute('href');
-            if (href && !href.startsWith('/api/proxy') && !href.startsWith('http') && !href.startsWith('//') && 
-                !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:') && 
-                !href.startsWith('javascript:') && !href.startsWith('data:')) {
-              try {
-                el.href = '/api/proxy?url=' + encodeURIComponent(new URL(href, '${targetUrl}').href);
-              } catch(err) {}
-            }
-          }
-        };
-
-        document.querySelectorAll('form, a').forEach(sanitizeElement);
-
-        const observer = new MutationObserver((mutations) => {
-          mutations.forEach((mutation) => {
-            mutation.addedNodes.forEach((node) => {
-              if (node.nodeType === 1) {
-                if (node.tagName === 'FORM' || node.tagName === 'A') {
-                  sanitizeElement(node);
-                }
-                node.querySelectorAll?.('form, a').forEach(sanitizeElement);
-              }
-            });
-          });
-        });
-        observer.observe(document.documentElement, { childList: true, subtree: true });
-
-        // Global Click Interceptor for buttons and custom elements handling click actions
-        document.addEventListener('click', (event) => {
-          const target = event.target.closest('button, [data-href], [data-url], input[type="submit"]');
-          if (!target) return;
-
-          const customUrl = target.getAttribute('data-href') || target.getAttribute('data-url');
-          if (customUrl) {
-            try {
-              event.preventDefault();
-              event.stopPropagation();
-              const absoluteUrl = new URL(customUrl, '${targetUrl}').href;
-              window.location.href = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
-            } catch (err) {}
-          }
-        }, true);
-
-        const handleRouteUpdate = (url) => {
-          if (typeof url !== 'string' || url === 'about:blank' || url.startsWith('/api/proxy') || url.startsWith('http') || url.startsWith('//') || url.startsWith('#')) {
-            return url === 'about:blank' ? '${targetUrl}' : url;
-          }
-          try {
-            const absoluteUrl = new URL(url, '${targetUrl}').href;
-            return '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
-          } catch (e) {
-            return url;
-          }
-        };
-
-        const originalLocation = window.location;
-        try {
-          const locationProxy = {
-            assign: function(url) {
-              return originalLocation.assign.call(originalLocation, handleRouteUpdate(url));
-            },
-            replace: function(url) {
-              return originalLocation.replace.call(originalLocation, handleRouteUpdate(url));
-            },
-            reload: function() {
-              return originalLocation.reload.call(originalLocation);
-            },
-            toString: function() {
-              return originalLocation.toString();
-            }
-          };
-          
-          Object.defineProperties(locationProxy, {
-            href: {
-              get: () => originalLocation.href,
-              set: (url) => { originalLocation.href = handleRouteUpdate(url); }
-            },
-            protocol: { get: () => originalLocation.protocol },
-            host: { get: () => originalLocation.host },
-            hostname: { get: () => originalLocation.hostname },
-            port: { get: () => originalLocation.port },
-            pathname: { get: () => originalLocation.pathname },
-            search: { get: () => originalLocation.search },
-            hash: { get: () => originalLocation.hash },
-            origin: { get: () => originalLocation.origin }
-          });
-
-          const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
-          if (!locationDescriptor || locationDescriptor.configurable) {
-            Object.defineProperty(window, 'location', {
-              get: () => locationProxy,
-              set: (url) => { originalLocation.href = handleRouteUpdate(url); }
-            });
-          }
-        } catch (err) {}
-
-        const originalOpen = window.open;
-        window.open = function(url, target, features) {
-          if (!url || url === 'about:blank') {
-            return originalOpen.call(window, '${targetUrl}', '_self', features);
-          }
-          try {
-            const absoluteUrl = new URL(url, '${targetUrl}').href;
-            return originalOpen.call(window, '/api/proxy?url=' + encodeURIComponent(absoluteUrl), '_self', features);
-          } catch (e) {
-            return originalOpen.call(window, url, target, features);
-          }
-        };
-      })();
-    </script>
-  `
-
-  content = content.replace(
-    /<head>/i,
-    `<head>
-      <base href="${targetUrl}">
-      <meta name="referrer" content="no-referrer">
-      <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
-      ${proxyScript}`,
-  )
-
-  return content
+  );
 }
 
+// Helper function to process HTML content
+function processHTML(content: string, targetUrl: string): string {
+  let processed = content
+    .replace(
+      /(href|src)="(?!https?:\/\/|\/\/|data:|mailto:|tel:|#)(.*?)"/g,
+      (match, attr, url) => {
+        try {
+          const absoluteUrl = new URL(url, targetUrl).href;
+          return `${attr}="${absoluteUrl}"`;
+        } catch {
+          return match;
+        }
+      }
+    )
+    .replace(
+      /<form\s+action="(?!https?:\/\/|\/\/|data:|mailto:)(.*?)"/g,
+      (match, url) => {
+        try {
+          const absoluteUrl = new URL(url, targetUrl).href;
+          return `<form action="${absoluteUrl}"`;
+        } catch {
+          return match;
+        }
+      }
+    )
+    .replace(
+      /<script\s+src="(?!https?:\/\/|\/\/|data:)(.*?)"/g,
+      (match, url) => {
+        try {
+          const absoluteUrl = new URL(url, targetUrl).href;
+          return `<script src="${absoluteUrl}"`;
+        } catch {
+          return match;
+        }
+      }
+    );
+
+  // Inject client-side proxy script to handle navigation and form submission
+  processed = processed.replace(
+    "</body>",
+    `
+      <script>
+        document.addEventListener('click', (e) => {
+          const link = e.target.closest('a');
+          if (link && !link.href.startsWith('http') && !link.href.startsWith('//')) {
+            e.preventDefault();
+            window.location.href = link.href;
+          }
+        });
+
+        document.addEventListener('submit', (e) => {
+          const form = e.target;
+          if (form.tagName === 'FORM') {
+            e.preventDefault();
+            const formData = new FormData(form);
+            fetch(form.action, {
+              method: form.method,
+              body: formData,
+            }).then(response => response.text()).then(html => {
+              document.open();
+              document.write(html);
+              document.close();
+            });
+          }
+        });
+      </script>
+    </body>`
+  );
+
+  return processed;
+}
+
+// Main API handler
 export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams
-  const targetUrl = searchParams.get("url")
+  const url = request.nextUrl;
+  const targetUrl = url.searchParams.get("url");
 
   if (!targetUrl) {
-    return NextResponse.json({ error: "URL parameter is required" }, { status: 400 })
+    return new NextResponse("Missing target URL", { status: 400 });
   }
 
   try {
-    const url = new URL(targetUrl)
-
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return NextResponse.json({ error: "Only HTTP and HTTPS protocols are allowed" }, { status: 400 })
-    }
-
     const response = await fetch(targetUrl, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         Accept: "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Cache-Control": "no-cache",
-        Pragma: "no-cache",
-        DNT: "1",
-        Connection: "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
       },
-      redirect: "follow",
-    })
+      redirect: "manual", // Changed to "manual" to handle redirects
+    });
+
+    // Handle redirects manually
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (location) {
+        try {
+          const absoluteLocation = new URL(location, targetUrl).href;
+          const proxiedLocation = `/api/proxy?url=${encodeURIComponent(absoluteLocation)}`;
+          return NextResponse.redirect(proxiedLocation, response.status);
+        } catch {
+          // Fallback: redirect as-is if URL parsing fails
+          return NextResponse.redirect(location, response.status);
+        }
+      }
+    }
 
     if (!response.ok) {
-      return NextResponse.json(
-        { error: `Failed to fetch: ${response.status} ${response.statusText}` },
-        { status: response.status },
-      )
+      return new NextResponse("Failed to fetch", { status: response.status });
     }
 
-    const contentType = response.headers.get("content-type") || getMimeType(targetUrl)
+    const contentType = response.headers.get("content-type") || getMimeType(targetUrl);
+    const html = await response.text();
 
-    if (contentType.includes("application/wasm") || targetUrl.endsWith(".wasm")) {
-      const buffer = await response.arrayBuffer()
-      return new NextResponse(buffer, {
-        headers: {
-          "Content-Type": "application/wasm",
-          "Cache-Control": "public, max-age=31536000, immutable",
-        },
-      })
+    // Process content based on MIME type
+    let processedContent = html;
+    if (contentType.includes("text/html")) {
+      processedContent = processHTML(html, targetUrl);
+    } else if (contentType.includes("application/javascript") || contentType.includes("text/javascript")) {
+      processedContent = processJavaScript(html, targetUrl);
+    } else if (contentType.includes("text/typescript")) {
+      processedContent = processTypeScript(html, targetUrl);
+    } else if (contentType.includes("text/css")) {
+      processedContent = processCSS(html, targetUrl);
     }
 
-    if (contentType.includes("text/html") || contentType.includes("application/xhtml")) {
-      let html = await response.text()
-      html = processHTML(html, targetUrl)
-
-      return new NextResponse(html, {
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-          "X-Frame-Options": "SAMEORIGIN",
-          "Content-Security-Policy":
-            "default-src 'self' 'unsafe-inline' 'unsafe-eval' * data: blob:; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' * blob:; worker-src 'self' blob:;",
-        },
-      })
-    } else if (
-      contentType.includes("application/javascript") ||
-      contentType.includes("text/javascript") ||
-      targetUrl.endsWith(".js") ||
-      targetUrl.endsWith(".mjs")
-    ) {
-      let js = await response.text()
-      js = processJavaScript(js, targetUrl)
-
-      return new NextResponse(js, {
-        headers: {
-          "Content-Type": "application/javascript; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
-      })
-    } else if (contentType.includes("application/typescript") || targetUrl.endsWith(".ts")) {
-      let ts = await response.text()
-      ts = processTypeScript(ts, targetUrl)
-
-      return new NextResponse(ts, {
-        headers: {
-          "Content-Type": "application/typescript; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
-      })
-    } else if (
-      contentType.includes("text/tsx") ||
-      contentType.includes("text/jsx") ||
-      targetUrl.endsWith(".tsx") ||
-      targetUrl.endsWith(".jsx")
-    ) {
-      let jsx = await response.text()
-      jsx = processTypeScript(jsx, targetUrl)
-
-      return new NextResponse(jsx, {
-        headers: {
-          "Content-Type": contentType.includes("tsx") ? "text/tsx; charset=utf-8" : "text/jsx; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
-      })
-    } else if (contentType.includes("text/css") || targetUrl.endsWith(".css")) {
-      let css = await response.text()
-      css = processCSS(css, targetUrl)
-
-      return new NextResponse(css, {
-        headers: {
-          "Content-Type": "text/css; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
-      })
-    } else if (contentType.includes("application/json") || targetUrl.endsWith(".json")) {
-      const json = await response.text()
-
-      return new NextResponse(json, {
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
-      })
-    } else {
-      const buffer = await response.arrayBuffer()
-      return new NextResponse(buffer, {
-        headers: {
-          "Content-Type": contentType,
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
-      })
-    }
+    return new NextResponse(processedContent, {
+      headers: {
+        "Content-Type": contentType,
+      },
+    });
   } catch (error) {
-    console.error("[v0] Proxy error:", error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error occurred" },
-      { status: 500 },
-    )
+    return new NextResponse("Error fetching or processing the resource", { status: 500 });
   }
 }
 
+// POST handler (unchanged)
 export async function POST(request: NextRequest) {
-  const { url: targetUrl, body, headers: requestHeaders } = await request.json()
+  const url = request.nextUrl;
+  const { url: targetUrl, body, headers: customHeaders } = await request.json();
 
   if (!targetUrl) {
-    return NextResponse.json({ error: "URL is required" }, { status: 400 })
+    return new NextResponse("Missing target URL", { status: 400 });
   }
 
   try {
     const response = await fetch(targetUrl, {
       method: "POST",
       headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        ...requestHeaders,
+        ...customHeaders,
       },
-      body: body ? JSON.stringify(body) : undefined,
-    })
+      body: JSON.stringify(body),
+    });
 
-    const data = await response.text()
+    if (!response.ok) {
+      return new NextResponse("Failed to fetch", { status: response.status });
+    }
 
-    return new NextResponse(data, {
-      status: response.status,
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    const content = await response.text();
+
+    return new NextResponse(content, {
       headers: {
-        "Content-Type": response.headers.get("content-type") || "text/plain",
+        "Content-Type": contentType,
       },
-    })
+    });
   } catch (error) {
-    console.error("[v0] Proxy POST error:", error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error occurred" },
-      { status: 500 },
-    )
+    return new NextResponse("Error fetching or processing the resource", { status: 500 });
   }
 }
