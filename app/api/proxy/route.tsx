@@ -22,10 +22,49 @@ const CSS_URL_RE = new RegExp(
   'g'
 )
 
+/**
+ * Validates target URL to prevent SSRF attacks against private networks,
+ * loopback interfaces, and cloud metadata services.
+ */
+function isSafeTargetUrl(url: URL): boolean {
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return false
+  }
+
+  const hostname = url.hostname.toLowerCase()
+
+  // Block loopback addresses
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname.endsWith(".localhost")
+  ) {
+    return false
+  }
+
+  // Block cloud metadata services (e.g. AWS/GCP/Azure)
+  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal") {
+    return false
+  }
+
+  // Basic private IP range checks (RFC 1918 & Link-Local)
+  if (
+    hostname.startsWith("10.") ||
+    hostname.startsWith("192.168.") ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
+    hostname.startsWith("169.254.")
+  ) {
+    return false
+  }
+
+  return true
+}
+
 function processJavaScript(content: string, targetUrl: string): string {
   content = content.replace(
     new RegExp(IMPORT_FROM_RE.source, IMPORT_FROM_RE.flags),
-    (match: string, modulePath: string, quote: string) => {
+    (match: string, modulePath: string) => {
       if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
       try {
         const absoluteUrl = new URL(modulePath, targetUrl).href
@@ -94,7 +133,6 @@ function processCSS(content: string, targetUrl: string): string {
 function processHTML(content: string, targetUrl: string): string {
   const url = new URL(targetUrl)
 
-  // Handle anchor tags with relative href
   content = content.replace(
     /<a\s+([^>]*?)href=["'](?!http|\/\/|#|mailto:|tel:|javascript:|data:)([^"']+)["']([^>]*?)>/gi,
     (match, before, hrefUrl, after) => {
@@ -105,7 +143,6 @@ function processHTML(content: string, targetUrl: string): string {
     }
   )
 
-  // Handle form actions
   content = content.replace(
     /<form\s+([^>]*?)action=["'](?!http|\/\/|#|mailto:|tel:|javascript:|data:)([^"']+)["']([^>]*?)>/gi,
     (match, before, actionUrl, after) => {
@@ -116,7 +153,6 @@ function processHTML(content: string, targetUrl: string): string {
     }
   )
 
-  // Handle resource attributes (src, data-src)
   content = content.replace(
     /(src|data-src)=["'](?!http|\/\/|#|mailto:|tel:|data:)([^"']+)["']/gi,
     (match, attr, resourceUrl) => {
@@ -127,7 +163,6 @@ function processHTML(content: string, targetUrl: string): string {
     }
   )
 
-  // Handle CSS link tags with relative href
   content = content.replace(
     /<link\s+([^>]*?)href=["'](?!http|\/\/|data:)([^"']+)["']([^>]*?)>/gi,
     (match, before, hrefUrl, after) => {
@@ -138,7 +173,6 @@ function processHTML(content: string, targetUrl: string): string {
     }
   )
 
-  // Replace protocol-relative URLs
   content = content.replace(
     /(href|src|action)=["']\/\/([^"']+)["']/gi,
     `$1="${url.protocol}//$2"`
@@ -183,7 +217,6 @@ function processHTML(content: string, targetUrl: string): string {
     </script>
   `
 
-  // Inject base tag, meta tags, and proxy script into head
   content = content.replace(
     /<head[^>]*>/i,
     `$&
@@ -206,8 +239,9 @@ export async function GET(request: NextRequest) {
   try {
     const url = new URL(targetUrl)
 
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return NextResponse.json({ error: "Only HTTP and HTTPS protocols are allowed" }, { status: 400 })
+    // Apply strict SSRF validation
+    if (!isSafeTargetUrl(url)) {
+      return NextResponse.json({ error: "Target URL is blocked for security reasons" }, { status: 403 })
     }
 
     const controller = new AbortController()
@@ -218,19 +252,11 @@ export async function GET(request: NextRequest) {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
         "DNT": "1",
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
       },
       redirect: "follow",
       signal: controller.signal,
@@ -253,7 +279,7 @@ export async function GET(request: NextRequest) {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "X-Frame-Options": "SAMEORIGIN",
-          "Content-Security-Policy": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-ancestors 'self';",
+          "Content-Security-Policy": "default-src * 'unsafe-inline' data: blob:; frame-ancestors 'self';",
         },
       })
     } else if (contentType.includes("javascript") || targetUrl.endsWith(".js") || targetUrl.endsWith(".mjs")) {
@@ -282,7 +308,11 @@ export async function GET(request: NextRequest) {
     } else {
       const buffer = await response.arrayBuffer()
       return new NextResponse(buffer, {
-        headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=3600" },
+        headers: { 
+          "Content-Type": contentType, 
+          "Cache-Control": "public, max-age=3600",
+          ...(response.headers.get("etag") ? { "ETag": response.headers.get("etag")! } : {})
+        },
       })
     }
   } catch (error) {
@@ -294,25 +324,32 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const { url: targetUrl, body, headers: reqHeaders } = await request.json()
+  const dataPayload = await request.json().catch(() => ({}))
+  const targetUrl = dataPayload.url
+  const rawBody = dataPayload.body
 
   if (!targetUrl) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 })
   }
 
   try {
+    const url = new URL(targetUrl)
+
+    if (!isSafeTargetUrl(url)) {
+      return NextResponse.json({ error: "Target URL is blocked for security reasons" }, { status: 403 })
+    }
+
     const response = await fetch(targetUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        ...reqHeaders,
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: rawBody ? JSON.stringify(rawBody) : undefined,
     })
 
-    const data = await response.text()
-    return new NextResponse(data, {
+    const responseText = await response.text()
+    return new NextResponse(responseText, {
       status: response.status,
       headers: { "Content-Type": response.headers.get("content-type") || "text/plain" },
     })
