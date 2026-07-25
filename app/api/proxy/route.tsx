@@ -1,150 +1,92 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-const MIME_TYPES = {
-  ".js": "application/javascript",
-  ".mjs": "application/javascript",
-  ".jsx": "text/jsx",
-  ".ts": "application/typescript",
-  ".tsx": "text/tsx",
-  ".json": "application/json",
-  ".css": "text/css",
-  ".html": "text/html",
-  ".htm": "text/html",
-  ".node": "application/node",
-  ".express": "application/javascript",
-  ".phantom": "application/javascript",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".svg": "image/svg+xml",
-  ".webp": "image/webp",
-  ".wasm": "application/wasm",
-  ".xml": "application/xml",
-  ".pdf": "application/pdf",
-  ".zip": "application/zip",
-}
-
-function getMimeType(url: string): string {
-  const extension = url.split(".").pop()?.toLowerCase()
-  return extension ? MIME_TYPES[`.${extension}` as keyof typeof MIME_TYPES] || "text/plain" : "text/plain"
-}
+// Regex patterns built via RegExp constructor to prevent bundler escaping issues
+const IMPORT_FROM_RE = new RegExp(
+  '(?:import\\s+.*?\\s+from\\s+[\'"`])([^\'"`]+)([\'"`])',
+  'g'
+)
+const REQUIRE_RE = new RegExp(
+  'require\\s*[(]\\s*[\'"`]([^\'"`]+)[\'"`]\\s*[)]',
+  'g'
+)
+const IMPORT_TYPE_RE = new RegExp(
+  '(?:import\\s+type\\s+.*?\\s+from\\s+[\'"`])([^\'"`]+)([\'"`])',
+  'g'
+)
+const CSS_IMPORT_RE = new RegExp(
+  '@import\\s+(?:url[(])?[\'"`]?([^\'"`()]+)[\'"`]?[)]?',
+  'g'
+)
+const CSS_URL_RE = new RegExp(
+  'url[(][\'"`]?([^\'"`()]+)[\'"`]?[)]',
+  'g'
+)
 
 function processJavaScript(content: string, targetUrl: string): string {
-  try {
-    content = content.replace(/(?:import\s+.*?\s+from\s+['"`])([^'"`]+)(['"`])/g, (match, modulePath, quote) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-        return match
-      }
+  content = content.replace(
+    new RegExp(IMPORT_FROM_RE.source, IMPORT_FROM_RE.flags),
+    (match: string, modulePath: string, quote: string) => {
+      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
       try {
         const absoluteUrl = new URL(modulePath, targetUrl).href
         return match.replace(modulePath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
-      } catch {
-        return match
-      }
-    })
+      } catch { return match }
+    }
+  )
 
-    // FIXED: $$ -> \( and \) for dynamic imports
-    content = content.replace(/import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-        return match
-      }
-      try {
-        const absoluteUrl = new URL(modulePath, targetUrl).href
-        return `import('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
-      } catch {
-        return match
-      }
-    })
-
-    // FIXED: $$ -> \( and \) for require calls
-    content = content.replace(/require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-        return match
-      }
+  content = content.replace(
+    new RegExp(REQUIRE_RE.source, REQUIRE_RE.flags),
+    (match: string, modulePath: string) => {
+      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
       try {
         const absoluteUrl = new URL(modulePath, targetUrl).href
         return `require('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
-      } catch {
-        return match
-      }
-    })
+      } catch { return match }
+    }
+  )
 
-    content = content.replace(/export\s+.*?\s+from\s+['"`]([^'"`]+)['"`]/g, (match, modulePath, quote) => {
-      if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-        return match
-      }
-      try {
-        const absoluteUrl = new URL(modulePath, targetUrl).href
-        return match.replace(modulePath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
-      } catch {
-        return match
-      }
-    })
-
-    content = content.replace(/new\s+(?:Shared)?Worker\s*\(\s*['"`]([^'"`]+)['"`]/g, (match, workerPath) => {
-      if (workerPath.startsWith("http") || workerPath.startsWith("//")) {
-        return match
-      }
-      try {
-        const absoluteUrl = new URL(workerPath, targetUrl).href
-        return match.replace(workerPath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
-      } catch {
-        return match
-      }
-    })
-
-    return content
-  } catch (error) {
-    console.error("[v0] Error processing JavaScript:", error)
-    return content
-  }
+  return content
 }
 
 function processTypeScript(content: string, targetUrl: string): string {
   content = processJavaScript(content, targetUrl)
 
-  content = content.replace(/(?:import\s+type\s+.*?\s+from\s+['"`])([^'"`]+)(['"`])/g, (match, modulePath, quote) => {
-    if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
-      return match
+  content = content.replace(
+    new RegExp(IMPORT_TYPE_RE.source, IMPORT_TYPE_RE.flags),
+    (match: string, modulePath: string) => {
+      if (modulePath.startsWith("http") || modulePath.startsWith("//")) return match
+      try {
+        const absoluteUrl = new URL(modulePath, targetUrl).href
+        return match.replace(modulePath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
+      } catch { return match }
     }
-    try {
-      const absoluteUrl = new URL(modulePath, targetUrl).href
-      return match.replace(modulePath, `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`)
-    } catch {
-      return match
-    }
-  })
+  )
 
   return content
 }
 
 function processCSS(content: string, targetUrl: string): string {
-  // FIXED: $$ -> \( and \) for @import url(...)
-  content = content.replace(/@import\s+(?:url\()?['"`]?([^'"`()]+)['"`]?\)?/g, (match, cssPath) => {
-    if (cssPath.startsWith("http") || cssPath.startsWith("//")) {
-      return match
+  content = content.replace(
+    new RegExp(CSS_IMPORT_RE.source, CSS_IMPORT_RE.flags),
+    (match: string, cssPath: string) => {
+      if (cssPath.startsWith("http") || cssPath.startsWith("//")) return match
+      try {
+        const absoluteUrl = new URL(cssPath, targetUrl).href
+        return `@import url('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
+      } catch { return match }
     }
-    try {
-      const absoluteUrl = new URL(cssPath, targetUrl).href
-      return `@import url('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
-    } catch {
-      return match
-    }
-  })
+  )
 
-  // FIXED: $$ -> \( and \) for url() references
-  content = content.replace(/url\(['"`]?([^'"`()]+)['"`]?\)/g, (match, resourcePath) => {
-    if (resourcePath.startsWith("http") || resourcePath.startsWith("//") || resourcePath.startsWith("data:")) {
-      return match
+  content = content.replace(
+    new RegExp(CSS_URL_RE.source, CSS_URL_RE.flags),
+    (match: string, resourcePath: string) => {
+      if (resourcePath.startsWith("http") || resourcePath.startsWith("//") || resourcePath.startsWith("data:")) return match
+      try {
+        const absoluteUrl = new URL(resourcePath, targetUrl).href
+        return `url('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
+      } catch { return match }
     }
-    try {
-      const absoluteUrl = new URL(resourcePath, targetUrl).href
-      return `url('/api/proxy?url=${encodeURIComponent(absoluteUrl)}')`
-    } catch {
-      return match
-    }
-  })
+  )
 
   return content
 }
@@ -152,149 +94,102 @@ function processCSS(content: string, targetUrl: string): string {
 function processHTML(content: string, targetUrl: string): string {
   const url = new URL(targetUrl)
 
-  content = content.replace(/<script([^>]*)>([\s\S]*?)<\/script>/gi, (match, attrs, scriptContent) => {
-    if (scriptContent.trim()) {
-      const wrappedScript = `
-        try {
-          ${scriptContent}
-        } catch (error) {
-          console.error('[v0] Script error:', error);
-        }
-      `
-      return `<script${attrs}>${wrappedScript}</script>`
-    }
-    return match
-  })
-
+  // Handle anchor tags with relative href
   content = content.replace(
     /<a\s+([^>]*?)href=["'](?!http|\/\/|#|mailto:|tel:|javascript:|data:)([^"']+)["']([^>]*?)>/gi,
-    (match, beforeHref, hrefUrl, afterHref) => {
+    (match, before, hrefUrl, after) => {
       try {
-        const absoluteUrl = new URL(hrefUrl, targetUrl).href
-        return `<a ${beforeHref}href="/api/proxy?url=${encodeURIComponent(absoluteUrl)}"${afterHref}>`
-      } catch {
-        return match
-      }
-    },
+        const abs = new URL(hrefUrl, targetUrl).href
+        return `<a ${before}href="/api/proxy?url=${encodeURIComponent(abs)}"${after}>`
+      } catch { return match }
+    }
   )
 
+  // Handle form actions
   content = content.replace(
     /<form\s+([^>]*?)action=["'](?!http|\/\/|#|mailto:|tel:|javascript:|data:)([^"']+)["']([^>]*?)>/gi,
-    (match, beforeAction, actionUrl, afterAction) => {
+    (match, before, actionUrl, after) => {
       try {
-        const absoluteUrl = new URL(actionUrl, targetUrl).href
-        return `<form ${beforeAction}action="/api/proxy?url=${encodeURIComponent(absoluteUrl)}"${afterAction}>`
-      } catch {
-        return match
-      }
-    },
+        const abs = new URL(actionUrl, targetUrl).href
+        return `<form ${before}action="/api/proxy?url=${encodeURIComponent(abs)}"${after}>`
+      } catch { return match }
+    }
   )
 
+  // Handle resource attributes (src, data-src)
   content = content.replace(
-    /(src|data-src|srcset)=["'](?!http|\/\/|#|mailto:|tel:|data:)([^"']+)["']/gi,
+    /(src|data-src)=["'](?!http|\/\/|#|mailto:|tel:|data:)([^"']+)["']/gi,
     (match, attr, resourceUrl) => {
       try {
-        const absoluteUrl = new URL(resourceUrl, targetUrl).href
-        return `${attr}="/api/proxy?url=${encodeURIComponent(absoluteUrl)}"`
-      } catch {
-        return match
-      }
-    },
+        const abs = new URL(resourceUrl, targetUrl).href
+        return `${attr}="/api/proxy?url=${encodeURIComponent(abs)}"`
+      } catch { return match }
+    }
   )
 
-  content = content.replace(/srcset=["']([^"']+)["']/gi, (match, srcset) => {
-    const processedSrcset = srcset.replace(/(?!http|\/\/|data:)([^\s,]+)/g, (url: string) => {
+  // Handle CSS link tags with relative href
+  content = content.replace(
+    /<link\s+([^>]*?)href=["'](?!http|\/\/|data:)([^"']+)["']([^>]*?)>/gi,
+    (match, before, hrefUrl, after) => {
       try {
-        const absoluteUrl = new URL(url, targetUrl).href
-        return `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`
-      } catch {
-        return url
-      }
-    })
-    return `srcset="${processedSrcset}"`
-  })
+        const abs = new URL(hrefUrl, targetUrl).href
+        return `<link ${before}href="/api/proxy?url=${encodeURIComponent(abs)}"${after}>`
+      } catch { return match }
+    }
+  )
 
-  content = content.replace(/(href|src|action)=["']\/\/([^"']+)["']/gi, `$1="${url.protocol}//$2"`)
+  // Replace protocol-relative URLs
+  content = content.replace(
+    /(href|src|action)=["']\/\/([^"']+)["']/gi,
+    `$1="${url.protocol}//$2"`
+  )
 
   const proxyScript = `
     <script>
       (function() {
-        console.log('[v0] Proxy browser initialized for: ${targetUrl}');
-
         document.addEventListener('click', function(e) {
-          const link = e.target.closest('a[href]');
+          var link = e.target.closest('a[href]');
           if (link && link.href) {
-            const href = link.getAttribute('href');
-            if (href && !href.startsWith('http') && !href.startsWith('//') && 
-                !href.startsWith('#') && !href.startsWith('mailto:') && 
+            var href = link.getAttribute('href');
+            if (href && !href.startsWith('http') && !href.startsWith('//') &&
+                !href.startsWith('#') && !href.startsWith('mailto:') &&
                 !href.startsWith('tel:') && !href.startsWith('javascript:') &&
-                !href.startsWith('data:')) {
+                !href.startsWith('data:') && !href.startsWith('/api/proxy')) {
               e.preventDefault();
               try {
-                const absoluteUrl = new URL(href, '${targetUrl}').href;
-                window.location.href = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
-              } catch (error) {
-                console.error('[v0] Navigation error:', error);
-              }
+                var absoluteUrl = new URL(href, '${targetUrl}').href;
+                window.parent.postMessage({ type: 'proxy-navigate', url: absoluteUrl }, '*');
+              } catch(err) { console.error('Proxy nav error:', err); }
+            } else if (href && (href.startsWith('http') || href.startsWith('//'))) {
+              e.preventDefault();
+              var fullUrl = href.startsWith('//') ? '${url.protocol}' + href : href;
+              window.parent.postMessage({ type: 'proxy-navigate', url: fullUrl }, '*');
             }
           }
         });
 
         document.addEventListener('submit', function(e) {
-          const form = e.target;
+          var form = e.target;
           if (form.action && !form.action.startsWith('http') && !form.action.startsWith('//')) {
             e.preventDefault();
             try {
-              const absoluteUrl = new URL(form.action, '${targetUrl}').href;
+              var absoluteUrl = new URL(form.action, '${targetUrl}').href;
               form.action = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
               form.submit();
-            } catch (error) {
-              console.error('[v0] Form submission error:', error);
-            }
+            } catch(err) { console.error('Proxy form error:', err); }
           }
-        });
-
-        const originalLocation = window.location;
-        const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
-        
-        if (locationDescriptor && locationDescriptor.configurable) {
-          Object.defineProperty(window, 'location', {
-            get: function() { return originalLocation; },
-            set: function(url) {
-              if (typeof url === 'string' && !url.startsWith('http') && !url.startsWith('//') &&
-                  !url.startsWith('#') && !url.startsWith('mailto:') && !url.startsWith('tel:')) {
-                try {
-                  const absoluteUrl = new URL(url, '${targetUrl}').href;
-                  originalLocation.href = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
-                } catch (error) {
-                  console.error('[v0] Location change error:', error);
-                  originalLocation.href = url;
-                }
-              } else {
-                originalLocation.href = url;
-              }
-            }
-          });
-        }
-
-        window.addEventListener('error', function(e) {
-          console.error('[v0] Page error:', e.message, e.filename, e.lineno, e.colno);
-        });
-
-        window.addEventListener('unhandledrejection', function(e) {
-          console.error('[v0] Unhandled promise rejection:', e.reason);
         });
       })();
     </script>
   `
 
+  // Inject base tag, meta tags, and proxy script into head
   content = content.replace(
-    /<head>/i,
-    `<head>
+    /<head[^>]*>/i,
+    `$&
       <base href="${targetUrl}">
       <meta name="referrer" content="no-referrer">
-      <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
-      ${proxyScript}`,
+      ${proxyScript}`
   )
 
   return content
@@ -315,145 +210,91 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Only HTTP and HTTPS protocols are allowed" }, { status: 400 })
     }
 
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000)
+
     const response = await fetch(targetUrl, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept: "*/*",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Cache-Control": "no-cache",
-        Pragma: "no-cache",
-        DNT: "1",
-        Connection: "keep-alive",
+        "Pragma": "no-cache",
+        "DNT": "1",
+        "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "cross-site",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
       },
       redirect: "follow",
-    })
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId))
 
     if (!response.ok) {
+      const errorBody = await response.text().catch(() => "")
       return NextResponse.json(
-        {
-          error: `Failed to fetch: ${response.status} ${response.statusText}`,
-        },
-        { status: response.status },
+        { error: `Failed to fetch: ${response.status} ${response.statusText}`, details: errorBody.substring(0, 500) },
+        { status: response.status }
       )
     }
 
-    const contentType = response.headers.get("content-type") || getMimeType(targetUrl)
-
-    if (contentType.includes("application/wasm") || targetUrl.endsWith(".wasm")) {
-      const buffer = await response.arrayBuffer()
-      return new NextResponse(buffer, {
-        headers: {
-          "Content-Type": "application/wasm",
-          "Cache-Control": "public, max-age=31536000, immutable",
-        },
-      })
-    }
+    const contentType = response.headers.get("content-type") || "text/plain"
 
     if (contentType.includes("text/html") || contentType.includes("application/xhtml")) {
       let html = await response.text()
       html = processHTML(html, targetUrl)
-
       return new NextResponse(html, {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "X-Frame-Options": "SAMEORIGIN",
-          "Content-Security-Policy":
-            "default-src 'self' 'unsafe-inline' 'unsafe-eval' * data: blob:; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' * blob:; worker-src 'self' blob:;",
+          "Content-Security-Policy": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-ancestors 'self';",
         },
       })
-    } else if (
-      contentType.includes("application/javascript") ||
-      contentType.includes("text/javascript") ||
-      targetUrl.endsWith(".js") ||
-      targetUrl.endsWith(".mjs")
-    ) {
+    } else if (contentType.includes("javascript") || targetUrl.endsWith(".js") || targetUrl.endsWith(".mjs")) {
       let js = await response.text()
       js = processJavaScript(js, targetUrl)
-
       return new NextResponse(js, {
-        headers: {
-          "Content-Type": "application/javascript; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       })
-    } else if (contentType.includes("application/typescript") || targetUrl.endsWith(".ts")) {
+    } else if (contentType.includes("typescript") || targetUrl.endsWith(".ts") || targetUrl.endsWith(".tsx")) {
       let ts = await response.text()
       ts = processTypeScript(ts, targetUrl)
-
       return new NextResponse(ts, {
-        headers: {
-          "Content-Type": "application/typescript; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
-      })
-    } else if (
-      contentType.includes("text/tsx") ||
-      contentType.includes("text/jsx") ||
-      targetUrl.endsWith(".tsx") ||
-      targetUrl.endsWith(".jsx")
-    ) {
-      let jsx = await response.text()
-      jsx = processTypeScript(jsx, targetUrl)
-
-      return new NextResponse(jsx, {
-        headers: {
-          "Content-Type": contentType.includes("tsx") ? "text/tsx; charset=utf-8" : "text/jsx; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { "Content-Type": "application/typescript; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       })
     } else if (contentType.includes("text/css") || targetUrl.endsWith(".css")) {
       let css = await response.text()
       css = processCSS(css, targetUrl)
-
       return new NextResponse(css, {
-        headers: {
-          "Content-Type": "text/css; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       })
     } else if (contentType.includes("application/json") || targetUrl.endsWith(".json")) {
       const json = await response.text()
-
       return new NextResponse(json, {
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       })
     } else {
       const buffer = await response.arrayBuffer()
       return new NextResponse(buffer, {
-        headers: {
-          "Content-Type": contentType,
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=3600" },
       })
     }
   } catch (error) {
-    console.error("[v0] Proxy error:", error)
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unknown error occurred",
-      },
-      { status: 500 },
-    )
+    const msg = error instanceof Error
+      ? error.name === "AbortError" ? "Request timeout" : error.message
+      : "Unknown error"
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
-  const { url: targetUrl, body, headers: requestHeaders } = await request.json()
+  const { url: targetUrl, body, headers: reqHeaders } = await request.json()
 
   if (!targetUrl) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 })
@@ -465,26 +306,20 @@ export async function POST(request: NextRequest) {
       headers: {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        ...requestHeaders,
+        ...reqHeaders,
       },
       body: body ? JSON.stringify(body) : undefined,
     })
 
     const data = await response.text()
-
     return new NextResponse(data, {
       status: response.status,
-      headers: {
-        "Content-Type": response.headers.get("content-type") || "text/plain",
-      },
+      headers: { "Content-Type": response.headers.get("content-type") || "text/plain" },
     })
   } catch (error) {
-    console.error("[v0] Proxy POST error:", error)
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unknown error occurred",
-      },
-      { status: 500 },
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      { status: 500 }
     )
   }
 }

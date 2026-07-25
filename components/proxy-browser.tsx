@@ -38,6 +38,7 @@ interface Tab {
   favicon?: string
   content?: string
   error?: string
+  errorDetails?: string
   history: string[]
   historyIndex: number
   isSecure?: boolean
@@ -119,11 +120,19 @@ export function ProxyBrowser() {
     setCurrentUrl(formattedUrl)
 
     setTabs((prev) =>
-      prev.map((tab) => (tab.isActive ? { ...tab, isLoading: true, error: undefined, content: undefined } : tab)),
+      prev.map((tab) =>
+        tab.isActive ? { ...tab, isLoading: true, error: undefined, errorDetails: undefined, content: undefined } : tab,
+      ),
     )
 
     try {
+      console.log("[v0] Fetching URL:", formattedUrl)
       const proxyResponse: ProxyResponse = await fetchThroughProxy(formattedUrl)
+      console.log("[v0] Proxy response received:", {
+        status: proxyResponse.status,
+        contentType: proxyResponse.contentType,
+        hasContent: !!proxyResponse.content,
+      })
 
       setTabs((prev) =>
         prev.map((tab) => {
@@ -147,6 +156,7 @@ export function ProxyBrowser() {
             favicon: proxyResponse.favicon,
             content: proxyResponse.content,
             error: undefined,
+            errorDetails: undefined,
             history: newHistory,
             historyIndex: newHistoryIndex,
             isSecure: formattedUrl.startsWith("https://"),
@@ -163,13 +173,22 @@ export function ProxyBrowser() {
         })
       }
     } catch (error) {
+      console.error("[v0] Navigation error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Failed to load page"
+
+      let errorDetails = ""
+      if (error instanceof Error && error.stack) {
+        errorDetails = error.stack
+      }
+
       setTabs((prev) =>
         prev.map((tab) =>
           tab.isActive
             ? {
                 ...tab,
                 isLoading: false,
-                error: error instanceof Error ? error.message : "Failed to load page",
+                error: errorMessage,
+                errorDetails,
                 title: "Error - " + (formattedUrl ? new URL(formattedUrl).hostname : "Unknown"),
                 isSecure: false,
               }
@@ -220,6 +239,7 @@ export function ProxyBrowser() {
               favicon: undefined,
               content: undefined,
               error: undefined,
+              errorDetails: undefined,
               isSecure: undefined,
             }
           : tab,
@@ -530,14 +550,38 @@ export function ProxyBrowser() {
             title={activeTab.title}
           />
         ) : activeTab?.error ? (
-          <Card className="h-full m-4 p-6 bg-card">
-            <div className="text-center text-destructive">
+          <Card className="h-full m-4 p-6 bg-card overflow-auto">
+            <div className="text-center text-destructive max-w-2xl mx-auto">
               <AlertCircle className="w-16 h-16 mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Failed to Load Page</h3>
-              <p className="text-sm mb-4">{activeTab.error}</p>
-              <Button onClick={() => navigateToUrl()} variant="outline">
-                Try Again
-              </Button>
+              <p className="text-sm mb-4 text-foreground/80">{activeTab.error}</p>
+              {activeTab.errorDetails && (
+                <details className="text-left mb-4">
+                  <summary className="cursor-pointer text-sm font-mono text-muted-foreground hover:text-foreground">
+                    View technical details
+                  </summary>
+                  <pre className="mt-2 p-4 bg-muted rounded text-xs overflow-auto max-h-48 text-muted-foreground">
+                    {activeTab.errorDetails}
+                  </pre>
+                </details>
+              )}
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Common issues:</p>
+                <ul className="text-xs text-left list-disc list-inside space-y-1 text-muted-foreground">
+                  <li>The website may be blocking proxy access (Cloudflare, bot protection)</li>
+                  <li>The website may be temporarily unavailable</li>
+                  <li>There may be a network connectivity issue</li>
+                  <li>The URL may be incorrect or the page may not exist</li>
+                </ul>
+              </div>
+              <div className="flex gap-2 justify-center mt-6">
+                <Button onClick={() => navigateToUrl()} variant="default">
+                  Try Again
+                </Button>
+                <Button onClick={goHome} variant="outline">
+                  Go Home
+                </Button>
+              </div>
             </div>
           </Card>
         ) : activeTab?.url ? (

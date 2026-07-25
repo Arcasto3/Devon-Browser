@@ -1,6 +1,3 @@
-import { CacheManager } from "./cache-manager"
-import { WorkerPool } from "./worker-pool"
-
 export interface ProxyResponse {
   content: string
   contentType: string
@@ -11,58 +8,55 @@ export interface ProxyResponse {
   language?: "javascript" | "typescript" | "jsx" | "tsx" | "css" | "html" | "json" | "other"
 }
 
-let initialized = false
-
-async function ensureInitialized() {
-  if (!initialized && typeof window !== "undefined") {
-    try {
-      await Promise.all([
-        CacheManager.init().catch((err) => console.warn("[v0] Cache init failed:", err)),
-        WorkerPool.init().catch((err) => console.warn("[v0] Worker pool init failed:", err)),
-      ])
-      initialized = true
-      console.log("[v0] Performance features initialized")
-    } catch (error) {
-      console.warn("[v0] Failed to initialize performance features:", error)
-      initialized = true // Mark as initialized to prevent retry loops
-    }
-  }
-}
-
 export async function fetchThroughProxy(url: string): Promise<ProxyResponse> {
-  ensureInitialized().catch(() => {})
-
+  console.log("[v0] Fetching URL:", url)
   try {
-    let cached = null
-    try {
-      cached = await CacheManager.get(url)
-    } catch (error) {
-      console.warn("[v0] Cache get failed:", error)
-    }
-
-    if (cached) {
-      console.log("[v0] Cache hit for:", url)
-      return {
-        content: cached.content,
-        contentType: cached.contentType,
-        status: 200,
-        title: extractTitle(cached.content, url),
-        favicon: `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=16`,
-      }
-    }
-
-    console.log("[v0] Cache miss for:", url)
-
     const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`
     const response = await fetch(proxyUrl)
 
+    console.log("[v0] Proxy response status:", response.status, response.statusText)
+
     if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || `HTTP ${response.status}`)
+      let errorMessage = `HTTP ${response.status}`
+      let errorDetails = ""
+      try {
+        const error = await response.json()
+        errorMessage = error.error || errorMessage
+        errorDetails = error.details || ""
+        console.error("[v0] Proxy error details:", errorMessage, errorDetails)
+      } catch {
+        // If response is not JSON, try to get text
+        try {
+          const errorText = await response.text()
+          if (errorText) {
+            errorMessage = errorText.substring(0, 200) // Limit error message length
+            console.error("[v0] Proxy error text:", errorMessage)
+          }
+        } catch {
+          // Use default error message
+        }
+      }
+      throw new Error(errorMessage)
     }
 
     const contentType = response.headers.get("content-type") || "text/html"
-    const content = await response.text()
+    console.log("[v0] Content type:", contentType)
+
+    let content: string
+    if (
+      contentType.includes("image/") ||
+      contentType.includes("application/octet-stream") ||
+      contentType.includes("application/pdf") ||
+      contentType.includes("application/zip")
+    ) {
+      // For binary content, convert to data URL
+      const blob = await response.blob()
+      content = URL.createObjectURL(blob)
+    } else {
+      content = await response.text()
+      console.log("[v0] Content length:", content.length)
+    }
+
     const extension = getFileExtension(url)
 
     let title = new URL(url).hostname
@@ -81,20 +75,6 @@ export async function fetchThroughProxy(url: string): Promise<ProxyResponse> {
       } else {
         language = "javascript"
       }
-
-      try {
-        const parseResult = await WorkerPool.execute({
-          id: `parse-${Date.now()}`,
-          type: "parse",
-          data: { content, url },
-        })
-
-        if (parseResult.success && parseResult.data.hasErrors) {
-          console.warn("[v0] Script parsing errors:", parseResult.data.errors)
-        }
-      } catch (error) {
-        console.warn("[v0] Failed to parse script:", error)
-      }
     } else if (isStyleFile(url)) {
       fileType = "style"
       language = "css"
@@ -109,18 +89,10 @@ export async function fetchThroughProxy(url: string): Promise<ProxyResponse> {
     }
 
     if (contentType.includes("text/html")) {
-      title = extractTitle(content, url)
-    }
-
-    try {
-      await CacheManager.set({
-        url,
-        content,
-        contentType,
-        timestamp: Date.now(),
-      })
-    } catch (error) {
-      console.warn("[v0] Failed to cache response:", error)
+      const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i)
+      if (titleMatch) {
+        title = titleMatch[1].trim()
+      }
     }
 
     return {
@@ -133,13 +105,9 @@ export async function fetchThroughProxy(url: string): Promise<ProxyResponse> {
       language,
     }
   } catch (error) {
+    console.error("[v0] Proxy fetch error:", error)
     throw new Error(error instanceof Error ? error.message : "Failed to fetch through proxy")
   }
-}
-
-function extractTitle(content: string, url: string): string {
-  const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i)
-  return titleMatch ? titleMatch[1].trim() : new URL(url).hostname
 }
 
 export function isValidUrl(string: string): boolean {
