@@ -5,13 +5,7 @@ const IMPORT_FROM_RE = new RegExp(
   '(?:import\\s+.*?\\s+from\\s+[\'"`])([^\'"`]+)([\'"`])',
   'g'
 )
-const REQUIRE_RE = new RegExp(
-  'require\\s*[(]\\s*[\'"`]([^\'"`]+)[\'"`]\\s*[)]',
-  'g'
-)
-const IMPORT_TYPE_RE = new RegExp(
-  '(?:import\\s+type\\s+.*?\\s+from\\s+[\'"`])([^\'"`]+)([\'"`])',
-  'g'
+const s
 )
 const CSS_IMPORT_RE = new RegExp(
   '@import\\s+(?:url[(])?[\'"`]?([^\'"`()]+)[\'"`]?[)]?',
@@ -281,45 +275,4 @@ export async function GET(request: NextRequest) {
       })
     } else {
       const buffer = await response.arrayBuffer()
-      return new NextResponse(buffer, {
-        headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=3600" },
-      })
-    }
-  } catch (error) {
-    const msg = error instanceof Error
-      ? error.name === "AbortError" ? "Request timeout" : error.message
-      : "Unknown error"
-    return NextResponse.json({ error: msg }, { status: 500 })
-  }
-}
-
-export async function POST(request: NextRequest) {
-  const { url: targetUrl, body, headers: reqHeaders } = await request.json()
-
-  if (!targetUrl) {
-    return NextResponse.json({ error: "URL is required" }, { status: 400 })
-  }
-
-  try {
-    const response = await fetch(targetUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        ...reqHeaders,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    })
-
-    const data = await response.text()
-    return new NextResponse(data, {
-      status: response.status,
-      headers: { "Content-Type": response.headers.get("content-type") || "text/plain" },
-    })
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
-    )
-  }
-}
+      retur
