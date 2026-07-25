@@ -4,6 +4,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --font-geist-sans: system-ui, -apple-system, sans-serif;
+  --font-geist-mono: "Courier New", monospace;
   --background: oklch(1 0 0); /* #ffffff */
   --foreground: oklch(0.556 0.014 258.338); /* #475569 */
   --card: oklch(0.984 0.013 180.695); /* #ecfeff */
