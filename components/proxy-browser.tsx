@@ -439,9 +439,13 @@ export function ProxyBrowser() {
           {activeTab?.url && (
             <div className="flex items-center">
               {activeTab.isSecure ? (
-                <Shield className="w-4 h-4 text-green-600" title="Secure Connection" />
+                <div title="Secure Connection">
+                  <Shield className="w-4 h-4 text-green-600" />
+                </div>
               ) : activeTab.url ? (
-                <ShieldAlert className="w-4 h-4 text-amber-600" title="Not Secure" />
+                <div title="Not Secure">
+                  <ShieldAlert className="w-4 h-4 text-amber-600" />
+                </div>
               ) : null}
             </div>
           )}

@@ -10,8 +10,14 @@ export const metadata: Metadata = {
   generator: "v0.app",
 }
 
-const geistSans = Geist({ subsets: ["latin"] })
-const geistMono = Geist_Mono({ subsets: ["latin"] })
+const geistSans = Geist({
+  subsets: ["latin"],
+  variable: "--font-geist-sans",
+})
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
+})
 
 export default function RootLayout({
   children,
@@ -19,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="bg-background">
       <body className={`font-sans ${geistSans.variable} ${geistMono.variable}`}>
         {children}
         <Analytics />
