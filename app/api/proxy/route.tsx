@@ -166,9 +166,8 @@ function processHTML(content: string, targetUrl: string): string {
   const proxyScript = `
     <script>
       (function() {
-        console.log('[v0] Upgraded proxy engine initialized for: ${targetUrl}');
+        console.log('[v0] Universal click-interceptor engine initialized for: ${targetUrl}');
 
-        // Continuously sanitize forms and dynamic links as they render/mutate
         const sanitizeElement = (el) => {
           if (!el || typeof el.getAttribute !== 'function') return;
           
@@ -196,10 +195,8 @@ function processHTML(content: string, targetUrl: string): string {
           }
         };
 
-        // Scan existing document
         document.querySelectorAll('form, a').forEach(sanitizeElement);
 
-        // Observe DOM modifications to rewrite dynamically injected elements (prevents about:blank triggers)
         const observer = new MutationObserver((mutations) => {
           mutations.forEach((mutation) => {
             mutation.addedNodes.forEach((node) => {
@@ -214,11 +211,78 @@ function processHTML(content: string, targetUrl: string): string {
         });
         observer.observe(document.documentElement, { childList: true, subtree: true });
 
-        // Fallback safety for window.open popups resolving to about:blank
+        // Global Click Interceptor for buttons and custom elements handling click actions
+        document.addEventListener('click', (event) => {
+          const target = event.target.closest('button, [data-href], [data-url], input[type="submit"]');
+          if (!target) return;
+
+          const customUrl = target.getAttribute('data-href') || target.getAttribute('data-url');
+          if (customUrl) {
+            try {
+              event.preventDefault();
+              event.stopPropagation();
+              const absoluteUrl = new URL(customUrl, '${targetUrl}').href;
+              window.location.href = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
+            } catch (err) {}
+          }
+        }, true);
+
+        const handleRouteUpdate = (url) => {
+          if (typeof url !== 'string' || url === 'about:blank' || url.startsWith('/api/proxy') || url.startsWith('http') || url.startsWith('//') || url.startsWith('#')) {
+            return url === 'about:blank' ? '${targetUrl}' : url;
+          }
+          try {
+            const absoluteUrl = new URL(url, '${targetUrl}').href;
+            return '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
+          } catch (e) {
+            return url;
+          }
+        };
+
+        const originalLocation = window.location;
+        try {
+          const locationProxy = {
+            assign: function(url) {
+              return originalLocation.assign.call(originalLocation, handleRouteUpdate(url));
+            },
+            replace: function(url) {
+              return originalLocation.replace.call(originalLocation, handleRouteUpdate(url));
+            },
+            reload: function() {
+              return originalLocation.reload.call(originalLocation);
+            },
+            toString: function() {
+              return originalLocation.toString();
+            }
+          };
+          
+          Object.defineProperties(locationProxy, {
+            href: {
+              get: () => originalLocation.href,
+              set: (url) => { originalLocation.href = handleRouteUpdate(url); }
+            },
+            protocol: { get: () => originalLocation.protocol },
+            host: { get: () => originalLocation.host },
+            hostname: { get: () => originalLocation.hostname },
+            port: { get: () => originalLocation.port },
+            pathname: { get: () => originalLocation.pathname },
+            search: { get: () => originalLocation.search },
+            hash: { get: () => originalLocation.hash },
+            origin: { get: () => originalLocation.origin }
+          });
+
+          const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+          if (!locationDescriptor || locationDescriptor.configurable) {
+            Object.defineProperty(window, 'location', {
+              get: () => locationProxy,
+              set: (url) => { originalLocation.href = handleRouteUpdate(url); }
+            });
+          }
+        } catch (err) {}
+
         const originalOpen = window.open;
         window.open = function(url, target, features) {
           if (!url || url === 'about:blank') {
-            console.warn('[v0] Intercepted blank popup, routing safely');
             return originalOpen.call(window, '${targetUrl}', '_self', features);
           }
           try {
@@ -228,28 +292,6 @@ function processHTML(content: string, targetUrl: string): string {
             return originalOpen.call(window, url, target, features);
           }
         };
-
-        // Protect window.location changes
-        const originalLocation = window.location;
-        const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
-        if (locationDescriptor && locationDescriptor.configurable) {
-          Object.defineProperty(window, 'location', {
-            get: function() { return originalLocation; },
-            set: function(url) {
-              if (typeof url === 'string' && url !== 'about:blank' && !url.startsWith('/api/proxy') && 
-                  !url.startsWith('http') && !url.startsWith('//') && !url.startsWith('#')) {
-                try {
-                  const absoluteUrl = new URL(url, '${targetUrl}').href;
-                  originalLocation.href = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
-                } catch (error) {
-                  originalLocation.href = url;
-                }
-              } else {
-                originalLocation.href = (url === 'about:blank') ? '${targetUrl}' : url;
-              }
-            }
-          });
-        }
       })();
     </script>
   `
