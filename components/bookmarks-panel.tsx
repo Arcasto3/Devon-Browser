@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
@@ -25,8 +25,12 @@ export function BookmarksPanel({
   currentTitle,
   currentFavicon,
 }: BookmarksPanelProps) {
-  const [bookmarks, setBookmarks] = useState<BookmarkItem[]>(() => SessionManager.loadSession().bookmarks)
+  const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([])
   const [searchQuery, setSearchQuery] = useState("")
+
+  useEffect(() => {
+    setBookmarks(SessionManager.loadSession().bookmarks)
+  }, [])
 
   const filteredBookmarks = bookmarks.filter(
     (bookmark) =>
