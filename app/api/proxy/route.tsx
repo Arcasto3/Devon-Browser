@@ -218,9 +218,11 @@ function processHTML(content: string, targetUrl: string): string {
         console.log('[v0] Proxy browser initialized for: ${targetUrl}');
 
         document.addEventListener('click', function(e) {
-          const link = e.target.closest('a[href]');
-          if (link && link.href) {
-            const href = link.getAttribute('href');
+          const target = e.target.closest('a[href], button[type="submit"], input[type="submit"]');
+          if (!target) return;
+
+          if (target.tagName === 'A') {
+            const href = target.getAttribute('href');
             if (href && !href.startsWith('http') && !href.startsWith('//') && 
                 !href.startsWith('#') && !href.startsWith('mailto:') && 
                 !href.startsWith('tel:') && !href.startsWith('javascript:') &&
@@ -234,19 +236,20 @@ function processHTML(content: string, targetUrl: string): string {
               }
             }
           }
-        });
+        }, true);
 
         document.addEventListener('submit', function(e) {
           const form = e.target;
           if (!form) return;
 
           const action = form.getAttribute('action') || window.location.href;
-          
           if (action.startsWith('http') || action.startsWith('//')) {
             return;
           }
 
           e.preventDefault();
+          e.stopPropagation();
+          
           try {
             const absoluteUrl = new URL(action, '${targetUrl}').href;
             
@@ -265,6 +268,20 @@ function processHTML(content: string, targetUrl: string): string {
           }
         }, true);
 
+        const originalOpen = window.open;
+        window.open = function(url, target, features) {
+          if (!url || url === 'about:blank') {
+            console.warn('[v0] Blocked about:blank popup attempt');
+            return null;
+          }
+          try {
+            const absoluteUrl = new URL(url, '${targetUrl}').href;
+            return originalOpen.call(window, '/api/proxy?url=' + encodeURIComponent(absoluteUrl), '_self', features);
+          } catch (e) {
+            return originalOpen.call(window, url, target, features);
+          }
+        };
+
         const originalLocation = window.location;
         const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
         
@@ -272,7 +289,7 @@ function processHTML(content: string, targetUrl: string): string {
           Object.defineProperty(window, 'location', {
             get: function() { return originalLocation; },
             set: function(url) {
-              if (typeof url === 'string' && !url.startsWith('http') && !url.startsWith('//') &&
+              if (typeof url === 'string' && url !== 'about:blank' && !url.startsWith('http') && !url.startsWith('//') &&
                   !url.startsWith('#') && !url.startsWith('mailto:') && !url.startsWith('tel:')) {
                 try {
                   const absoluteUrl = new URL(url, '${targetUrl}').href;
@@ -282,7 +299,7 @@ function processHTML(content: string, targetUrl: string): string {
                   originalLocation.href = url;
                 }
               } else {
-                originalLocation.href = url;
+                originalLocation.href = url === 'about:blank' ? '${targetUrl}' : url;
               }
             }
           });
