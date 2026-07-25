@@ -44,7 +44,6 @@ function processJavaScript(content: string, targetUrl: string): string {
       }
     })
 
-    // FIXED: $$ -> \( and \) for dynamic imports
     content = content.replace(/import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
       if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
         return match
@@ -57,7 +56,6 @@ function processJavaScript(content: string, targetUrl: string): string {
       }
     })
 
-    // FIXED: $$ -> \( and \) for require calls
     content = content.replace(/require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g, (match, modulePath) => {
       if (modulePath.startsWith("http") || modulePath.startsWith("//")) {
         return match
@@ -120,7 +118,6 @@ function processTypeScript(content: string, targetUrl: string): string {
 }
 
 function processCSS(content: string, targetUrl: string): string {
-  // FIXED: $$ -> \( and \) for @import url(...)
   content = content.replace(/@import\s+(?:url\()?['"`]?([^'"`()]+)['"`]?\)?/g, (match, cssPath) => {
     if (cssPath.startsWith("http") || cssPath.startsWith("//")) {
       return match
@@ -133,7 +130,6 @@ function processCSS(content: string, targetUrl: string): string {
     }
   })
 
-  // FIXED: $$ -> \( and \) for url() references
   content = content.replace(/url\(['"`]?([^'"`()]+)['"`]?\)/g, (match, resourcePath) => {
     if (resourcePath.startsWith("http") || resourcePath.startsWith("//") || resourcePath.startsWith("data:")) {
       return match
@@ -242,17 +238,32 @@ function processHTML(content: string, targetUrl: string): string {
 
         document.addEventListener('submit', function(e) {
           const form = e.target;
-          if (form.action && !form.action.startsWith('http') && !form.action.startsWith('//')) {
-            e.preventDefault();
-            try {
-              const absoluteUrl = new URL(form.action, '${targetUrl}').href;
-              form.action = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
-              form.submit();
-            } catch (error) {
-              console.error('[v0] Form submission error:', error);
-            }
+          if (!form) return;
+
+          const action = form.getAttribute('action') || window.location.href;
+          
+          if (action.startsWith('http') || action.startsWith('//')) {
+            return;
           }
-        });
+
+          e.preventDefault();
+          try {
+            const absoluteUrl = new URL(action, '${targetUrl}').href;
+            
+            if ((form.getAttribute('method') || 'GET').toUpperCase() === 'GET') {
+              const formData = new FormData(form);
+              const queryString = new URLSearchParams(formData).toString();
+              const finalUrl = absoluteUrl + (queryString ? '?' + queryString : '');
+              window.location.href = '/api/proxy?url=' + encodeURIComponent(finalUrl);
+            } else {
+              form.action = '/api/proxy?url=' + encodeURIComponent(absoluteUrl);
+              form.removeAttribute('target');
+              HTMLFormElement.prototype.submit.call(form);
+            }
+          } catch (error) {
+            console.error('[v0] Form submission error:', error);
+          }
+        }, true);
 
         const originalLocation = window.location;
         const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
